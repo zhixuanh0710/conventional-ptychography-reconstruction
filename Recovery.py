@@ -1,9 +1,6 @@
 """
 Conventional far-field ptychography reconstruction.
 
-Flat script aligned with legacy/plant/Recovery.py. Hyperparameters are
-loaded from a YAML config; the training loop is left untouched.
-
 Usage:
     python Recovery.py --config config/plant.yaml
 """
@@ -16,7 +13,6 @@ except Exception:
     pass
 
 import argparse
-import math
 import os
 
 import matplotlib
@@ -27,16 +23,22 @@ import torch
 import torch.nn.functional as F
 import yaml
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from scipy.io import loadmat, savemat
+from scipy.io import savemat
 from tqdm import tqdm
 
 from models.complex_inr import ComplexINRModel2D as FullModel
-from utils import haar_wavelet_sparsity_loss, save_model_with_required_grad
+from utils import (
+    haar_wavelet_sparsity_loss,
+    load_ptychography_data,
+    quadratic_phase_probe,
+    save_model_with_required_grad,
+    scan_positions_to_pixels,
+)
+
+VALID_INIT_TYPES = ('initNone', 'initProbe', 'initQuadratic')
+VALID_LOSS_TYPES = ('smooth_L1_loss', 'FD_loss', 'Poisson_likelihood_loss')
 
 
-# -----------------------------------------------------------------------------
-# Config
-# -----------------------------------------------------------------------------
 def load_config(path):
     with open(path, 'r', encoding='utf-8') as f:
         raw = yaml.safe_load(f)
@@ -55,6 +57,13 @@ def load_config(path):
               'vis_interval', 'batch_size', 'zoom_size'):
         if k in cfg and cfg[k] is not None:
             cfg[k] = int(cfg[k])
+
+    init_type = cfg.get('init_type', 'initNone')
+    if init_type not in VALID_INIT_TYPES:
+        raise ValueError(f'init_type must be one of {VALID_INIT_TYPES}, got {init_type!r}')
+    loss_type = cfg.get('loss_type', 'smooth_L1_loss')
+    if loss_type not in VALID_LOSS_TYPES:
+        raise ValueError(f'loss_type must be one of {VALID_LOSS_TYPES}, got {loss_type!r}')
     return cfg
 
 
@@ -63,73 +72,39 @@ ap.add_argument('--config', type=str, default='config/plant.yaml')
 args = ap.parse_args()
 cfg = load_config(args.config)
 
-
-# -----------------------------------------------------------------------------
-# Data
-# -----------------------------------------------------------------------------
 gap = cfg.get('gap', 1)
 wavelength = cfg['wavelength']
 cameraLength = cfg['camera_length']
 cameraPixelPitch = cfg['camera_pixel_pitch']
-data_dir = cfg['data_dir']
-bundle_file = cfg.get('bundle_file')
 
-if bundle_file:
-    data = loadmat(os.path.join(data_dir, bundle_file))
-    xlocation = data['xlocation'][:, 0::gap].squeeze()
-    ylocation = data['ylocation'][:, 0::gap].squeeze()
-    probe = torch.from_numpy(data['probe']).to('cuda')
-    inputFrames = data['imRaw']
-    gt_object = data.get('obj', None)
-    initProbe = (torch.from_numpy(data['initProbe']).to('cuda')
-                 if 'initProbe' in data else None)
-else:
-    loc = loadmat(os.path.join(data_dir, cfg['location_file']))
-    xlocation = np.asarray(loc['xlocation']).squeeze()
-    ylocation = np.asarray(loc['ylocation']).squeeze()
-    if xlocation.ndim == 0:
-        raise RuntimeError('xlocation must be at least 1-D')
-    xlocation = xlocation[::gap]
-    ylocation = ylocation[::gap]
-    probe = torch.from_numpy(
-        loadmat(os.path.join(data_dir, cfg['probe_file']))['probe']).to('cuda')
-    inputFrames = loadmat(os.path.join(data_dir, cfg['raw_file']))['imRaw']
-    gt_object = (loadmat(os.path.join(data_dir, cfg['gt_file']))['obj']
-                 if cfg.get('gt_file') else None)
-    initProbe = (torch.from_numpy(
-        loadmat(os.path.join(data_dir, cfg['init_probe_file']))['initProbe']
-    ).to('cuda') if cfg.get('init_probe_file') else None)
+data = load_ptychography_data(
+    data_dir=cfg['data_dir'],
+    bundle_file=cfg.get('bundle_file'),
+    location_file=cfg.get('location_file'),
+    raw_file=cfg.get('raw_file'),
+    probe_file=cfg.get('probe_file'),
+    gt_file=cfg.get('gt_file'),
+    init_probe_file=cfg.get('init_probe_file'),
+    gap=gap,
+)
+xlocation = data['xlocation']
+ylocation = data['ylocation']
+probe = torch.from_numpy(np.asarray(data['probe'])).to('cuda')
+inputFrames = data['imRaw']
+gt_object = data.get('obj')
+initProbe = (torch.from_numpy(np.asarray(data['initProbe'])).to('cuda')
+             if 'initProbe' in data else None)
 
-input = torch.tensor(inputFrames[:, :, 0::gap]).float().to('cuda')
+input = torch.tensor(inputFrames).float().to('cuda')
 frames = input.shape[2]
 print(f"Location shape: {xlocation.shape}")
 
-
-# -----------------------------------------------------------------------------
-# Pixel geometry
-# -----------------------------------------------------------------------------
-x_pixel_positions = xlocation - np.min(xlocation)
-y_pixel_positions = ylocation - np.min(ylocation)
-
-M, N = probe.shape
-dx = wavelength * cameraLength / (np.array([M, N]) * cameraPixelPitch)
-tlY = np.round(y_pixel_positions / dx[0]).astype(int)
-tlX = np.round(x_pixel_positions / dx[1]).astype(int)
-brY = tlY + M
-brX = tlX + N
-
-obj = np.ones((np.max(brY), np.max(brX)))
-imSizeX, imSizeY = obj.shape
-print('imSizeX:', imSizeX)
-print('imSizeY:', imSizeY)
-max_size = max(imSizeX, imSizeY)
-target_size = math.ceil(max_size / 6) * 6
+tlX, tlY, brX, brY, dx, target_size = scan_positions_to_pixels(
+    xlocation, ylocation, probe.shape,
+    wavelength, cameraLength, cameraPixelPitch,
+)
 print("target canvas:", target_size)
 
-
-# -----------------------------------------------------------------------------
-# Hyperparameters
-# -----------------------------------------------------------------------------
 batch_size = cfg.get('batch_size', 10)
 cur_ds = cfg.get('downsample_factor', 2)
 learning_rate = cfg.get('lr', 1e-3)
@@ -163,36 +138,20 @@ os.makedirs(vis_dir, exist_ok=True)
 print("device:", device)
 print(f"Results will be saved to: {vis_dir}")
 
-
-# -----------------------------------------------------------------------------
-# Probe initial (for residual connection)
-# -----------------------------------------------------------------------------
 if initProbe is not None and initProbe.dtype != torch.complex64:
     initProbe = initProbe.type(torch.complex64)
 
-probe_height, probe_width = probe.shape
-
 if init_type == 'initQuadratic':
-    xp = (np.arange(N, dtype=np.float32) - N / 2) * dx[1]
-    yp = (np.arange(M, dtype=np.float32) - M / 2) * dx[0]
-    Xp, Yp = np.meshgrid(xp, yp)
-    quad_phase = np.pi / (wavelength * quadratic_focal_length) * (Xp ** 2 + Yp ** 2)
-    base = initProbe.cpu().numpy() if initProbe is not None else probe.cpu().numpy()
-    init_probe_np = np.exp(1j * quad_phase).astype(np.complex64) * base.astype(np.complex64)
-    probe_initial_torch = torch.from_numpy(init_probe_np).to(device)
+    base = initProbe if initProbe is not None else probe
+    probe_initial_torch = quadratic_phase_probe(
+        base, dx, wavelength, quadratic_focal_length).to(device).to(torch.complex64)
 elif init_type == 'initNone':
     probe_initial_torch = None
     use_residual = False
-else:  # initProbe
-    probe_initial_torch = initProbe.to(device) if initProbe is not None else probe.to(device)
+else:
+    probe_initial_torch = (initProbe if initProbe is not None else probe).to(device)
 
-if probe_initial_torch is not None and probe_initial_torch.dtype != torch.complex64:
-    probe_initial_torch = probe_initial_torch.type(torch.complex64)
-
-
-# -----------------------------------------------------------------------------
-# Model
-# -----------------------------------------------------------------------------
+probe_height, probe_width = probe.shape
 modelFn = FullModel(
     output_width=target_size,
     output_height=target_size,
@@ -215,12 +174,10 @@ modelFn = FullModel(
     trainable_omega0=trainable_omega0,
 ).to(device)
 
-central_pixel = imSizeX // 2
+central_pixel = target_size // 2
 
 
-# -----------------------------------------------------------------------------
-# Training loop (unchanged from legacy Recovery.py)
-# -----------------------------------------------------------------------------
+# ---- training loop (mirrors legacy/plant/Recovery.py; do not restructure) ---
 t = tqdm(range(num_epochs))
 optimizer = torch.optim.Adam(
     lr=learning_rate, params=filter(lambda p: p.requires_grad, modelFn.parameters()))
@@ -239,7 +196,7 @@ for epoch in t:
 
             object_complex, probe_complex = modelFn()
             if probe_complex is None:
-                raise RuntimeError("当前配置需要启用 probe 分支，请确保 update_probe=True")
+                raise RuntimeError("update_probe must be True for conventional ptychography")
             probe_norm = torch.sqrt((probe_complex.abs() ** 2).sum())
             probe_complex = probe_complex / probe_norm
 
@@ -248,7 +205,6 @@ for epoch in t:
             if object_complex.dim() > 2:
                 object_complex = object_complex.squeeze()
 
-            # Probe 中心对齐
             absP2 = probe_complex.abs() ** 2
             Mp, Np = absP2.shape
             tot = absP2.sum()

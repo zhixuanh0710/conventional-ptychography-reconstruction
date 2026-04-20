@@ -1,5 +1,5 @@
 # Simulation dataset — per-variable .mat files
-# Usage: python main.py --config config/simulation.yaml
+# Usage: python Recovery.py --config config/simulation.yaml
 
 data:
   data_dir: data/simulation

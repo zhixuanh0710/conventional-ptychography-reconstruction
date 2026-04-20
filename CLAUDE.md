@@ -70,14 +70,14 @@ Two accepted layouts, selected by config keys:
 
 ### Legacy vs current
 
-`legacy/` is historical/reference code. `models/complex_inr.py` is a verbatim copy of `legacy/network_complex_euler.py` (kept in sync intentionally). `legacy/plant/Recovery.py` has a latent `NameError` (missing `haar_wavelet_sparsity_loss` def that only lived in the notebook) — the root `Recovery.py` imports the function from `utils` instead.
+`legacy/` is historical/reference code. `models/complex_inr.py` is a verbatim copy of `legacy/network_complex_euler.py` (kept in sync intentionally).
 
 `gscp/` is carried over from the sibling `coded-ptychography-reconstruction` project. Nothing in `Recovery.py` or `models/` references it; leave it alone unless you are actively introducing Gaussian splatting.
 
 ## Gotchas
 
-- **Don't push to `main` without authorization.** This repo's `.git` tracks `https://github.com/zhixuanh0710/conventional-ptychography-reconstruction.git`; a previous session force-pushed to overwrite, which is destructive.
-- **Windows stdout encoding**: `Recovery.py` calls `sys.stdout.reconfigure(encoding='utf-8')` at the top because Chinese comments/prints + cp1252 default crash when stdout is redirected.
+- **Don't push to `main` without authorization.** Remote is `https://github.com/zhixuanh0710/conventional-ptychography-reconstruction.git`.
+- **Windows stdout encoding**: `Recovery.py` calls `sys.stdout.reconfigure(encoding='utf-8')` at the top because redirected stdout defaults to cp1252 and fails on non-ASCII output.
 - **Not all hyperparameter combos converge.** With `init_type: initNone`, bs=10, lr=1e-3 (the plant default), loss plateaus around 1e3 on plant after 2000 epochs. `initProbe` + `use_residual: true`, or larger batch + higher lr (e.g. bs=25 lr=2e-3), are required to drive loss further down. Plateau is *not* a bug.
 - **`torch.roll` shift args**: newer PyTorch rejects CUDA tensor scalars — use `.item()`. The rolled probe centering path has an `isfinite` guard that silently skips when the COM computation produces NaN/Inf under bfloat16.
 - **Non-square probes** are not supported. The probe reshape convention `(probe_width, probe_height)` from the legacy code transposes shape on non-square inputs; assert or refuse rather than guessing.

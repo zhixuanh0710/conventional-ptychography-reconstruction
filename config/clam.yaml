@@ -1,5 +1,5 @@
 # Clam dataset — per-variable .mat files
-# Usage: python main.py --config config/clam.yaml
+# Usage: python Recovery.py --config config/clam.yaml
 
 data:
   data_dir: data/clam
