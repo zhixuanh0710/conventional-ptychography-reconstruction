@@ -1,0 +1,45 @@
+# Simulation dataset — per-variable .mat files
+# Usage: python main.py --config config/simulation.yaml
+
+data:
+  data_dir: data/simulation
+  location_file: location3.mat
+  raw_file: imRaw3.mat
+  probe_file: probe3.mat
+  gap: 1
+
+physics:
+  wavelength: 2.4e-9
+  camera_length: 0.5
+  camera_pixel_pitch: 2.7e-5
+
+model:
+  downsample_factor: 2
+  n_levels: 16
+  n_features_per_level: 2
+  log2_hashmap_size: 18
+  base_resolution: 16
+  per_level_scale: 1.5
+  hidden_features: 64
+  hidden_layers: 2
+  first_omega_0: 10.0
+  hidden_omega_0: 1.0
+  trainable_omega0: true
+  init_type: initNone
+  use_residual: true
+  quadratic_focal_length: 0.1
+
+training:
+  iters: 2000
+  batch_size: 10
+  lr: 1.0e-3
+  lr_decay_step: 10000
+  lr_decay_gamma: 0.1
+  loss_type: smooth_L1_loss
+  use_amp: true
+  sparsity_weight: 0.0
+
+output:
+  result_dir: results/simulation
+  vis_interval: 100
+  zoom_size: 300

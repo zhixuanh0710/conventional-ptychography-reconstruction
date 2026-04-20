@@ -1,0 +1,46 @@
+# Data files (large .mat files)
+data/
+*.mat
+
+# Results (generated)
+results/
+result/
+
+# Logs
+*.log
+
+# Claude Code local state
+.claude/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Checkpoints
+*.pth
+
+# Jupyter notebook outputs (legacy notebooks are >100MB)
+*.ipynb
+
+# Legacy artifacts too large for GitHub
+legacy/*/result/
+legacy/*/result_SR/
+
+# Build artifacts
+build/
+*.egg-info/
+*.so
+*.pyd
+*.obj
+*.lib
+*.exp
+*.dll
