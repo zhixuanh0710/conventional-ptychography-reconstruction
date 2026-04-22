@@ -1,0 +1,69 @@
+# Gaussian-splatting reconstruction on the simulated "westwest" dataset.
+# Usage:
+#   python Recovery.py --config config/simulation_conventional_westwest_ng50000.yaml
+#
+# Schema: flat. Recovery.py's load_config flattens top-level sections into one
+# dict; `gaussian_field` / `probe_gaussian_field` stay as nested dicts (only
+# one level of flattening).
+#
+# Gaussian counts are tuned for the pure-PyTorch rasterizer fallback (no CUDA
+# extension, no ninja). Raise them if the CUDA kernel is available.
+
+data:
+  data_dir: data/simulation_conventional_westwest
+  bundle_file: dataset-sim.mat
+  gap: 1
+
+physics:
+  wavelength: 6.75e-07
+  camera_length: 0.0295
+  camera_pixel_pitch: 2.96e-05
+
+model:
+  model_type: gaussian_field        # select the GS backend in Recovery.py
+  downsample_factor: 1              # object rendered at full canvas
+  init_type: initProbe              # seed probe GS from the measured probe
+  use_residual: false
+  quadratic_focal_length: 0.1
+
+  gaussian_field:                   # object branch
+    num_initial_gaussians: 15000
+    parameterization: cholesky
+    weight_representation: real_imag
+    phase_init_std: 0.3
+    init_scale: 3.0
+    min_scale: 1.0
+    max_patch_radius: 16
+    densify_grad_threshold: 5.0e-06
+    densify_interval: 500
+    densify_until_step: 6000
+    max_gaussians: 40000
+
+  probe_gaussian_field:             # probe branch
+    num_initial_gaussians: 10000
+    parameterization: cholesky
+    weight_representation: real_imag
+    phase_init_std: 0.3
+    init_scale: 3.0
+    min_scale: 1.0
+    max_patch_radius: 16
+    densify_grad_threshold: 5.0e-06
+    densify_interval: 500
+    densify_until_step: 6000
+    max_gaussians: 30000
+
+training:
+  iters: 500
+  batch_size: 10
+  lr: 1.0e-2
+  lr_decay_step: 10000
+  lr_decay_gamma: 0.1
+  loss_type: smooth_L1_loss         # smooth_L1_loss | FD_loss | Poisson_likelihood_loss
+  # GS custom CUDA kernels are not autocast-safe; disable bf16 AMP for this backend.
+  use_amp: false
+  sparsity_weight: 0.0
+
+output:
+  result_dir: results/simulation_conventional_westwest_ng50000
+  vis_interval: 25
+  zoom_size: 500

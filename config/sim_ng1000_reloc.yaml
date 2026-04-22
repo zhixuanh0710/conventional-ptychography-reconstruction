@@ -1,0 +1,71 @@
+# ng=1000 with relocate on, SGLD noise off. Same relocate rate and init_scale
+# as the original sweep — only difference is mcmc_noise_lr_scale = 0.
+#
+# Usage:
+#   python Recovery.py --config config/sim_ng1000_reloc.yaml
+
+data:
+  data_dir: data/simulation_conventional_westwest
+  bundle_file: dataset-sim.mat
+  gap: 1
+
+physics:
+  wavelength: 6.75e-07
+  camera_length: 0.0295
+  camera_pixel_pitch: 2.96e-05
+
+model:
+  model_type: gaussian_field
+  downsample_factor: 1
+  init_type: initProbe
+  use_residual: false
+  quadratic_focal_length: 0.1
+
+  gaussian_field:                   # object branch: 1000 pts, noise off
+    num_initial_gaussians: 1000
+    max_gaussians: 1000
+    parameterization: cholesky
+    weight_representation: real_imag
+    phase_init_std: 0.3
+    init_scale: 3.0
+    min_scale: 1.0
+    max_patch_radius: 16
+    density_control: mcmc
+    mcmc_grow_rate: 0.0             # pinned count, no birth
+    mcmc_relocation_fraction: 0.05
+    mcmc_noise_lr_scale: 0.0        # <-- SGLD noise disabled
+    densify_interval: 500
+    densify_until_step: 6000
+    densify_grad_threshold: 5.0e-06 # unused in MCMC
+
+  probe_gaussian_field:             # probe branch: noise off too (consistency)
+    num_initial_gaussians: 10000
+    parameterization: cholesky
+    weight_representation: real_imag
+    phase_init_std: 0.3
+    init_scale: 3.0                 # was 3.0 (user requested both use 3.0)
+    min_scale: 1.0
+    max_patch_radius: 16
+    density_control: mcmc
+    mcmc_grow_rate: 0.05
+    mcmc_relocation_fraction: 0.05
+    mcmc_noise_lr_scale: 0.0        # <-- SGLD noise disabled
+    densify_interval: 500
+    densify_until_step: 6000
+    max_gaussians: 30000
+    densify_grad_threshold: 5.0e-06
+
+training:
+  iters: 500
+  batch_size: 10
+  lr: 1.0e-2
+  lr_decay_step: 10000
+  lr_decay_gamma: 0.1
+  loss_type: smooth_L1_loss
+  use_amp: false
+  sparsity_weight: 0.01
+
+output:
+  result_dir: results/sweep_ng1000_reloc
+  vis_interval: 50
+  zoom_size: 500

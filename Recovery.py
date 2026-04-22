@@ -27,6 +27,7 @@ from scipy.io import savemat
 from tqdm import tqdm
 
 from models.complex_inr import ComplexINRModel2D as FullModel
+from models.gaussian_fields import ConventionalGSModel2D
 from utils import (
     haar_wavelet_sparsity_loss,
     load_ptychography_data,
@@ -37,6 +38,7 @@ from utils import (
 
 VALID_INIT_TYPES = ('initNone', 'initProbe', 'initQuadratic')
 VALID_LOSS_TYPES = ('smooth_L1_loss', 'FD_loss', 'Poisson_likelihood_loss')
+VALID_MODEL_TYPES = ('inr', 'gaussian_field')
 
 
 def load_config(path):
@@ -64,6 +66,9 @@ def load_config(path):
     loss_type = cfg.get('loss_type', 'smooth_L1_loss')
     if loss_type not in VALID_LOSS_TYPES:
         raise ValueError(f'loss_type must be one of {VALID_LOSS_TYPES}, got {loss_type!r}')
+    model_type = cfg.get('model_type', 'inr')
+    if model_type not in VALID_MODEL_TYPES:
+        raise ValueError(f'model_type must be one of {VALID_MODEL_TYPES}, got {model_type!r}')
     return cfg
 
 
@@ -130,6 +135,7 @@ trainable_omega0 = cfg.get('trainable_omega0', True)
 use_residual = cfg.get('use_residual', False)
 init_type = cfg.get('init_type', 'initNone')
 quadratic_focal_length = cfg.get('quadratic_focal_length', 0.1)
+model_type = cfg.get('model_type', 'inr')
 
 vis_dir = cfg.get('result_dir', './result')
 vis_interval = cfg.get('vis_interval', 100)
@@ -152,35 +158,85 @@ else:
     probe_initial_torch = (initProbe if initProbe is not None else probe).to(device)
 
 probe_height, probe_width = probe.shape
-modelFn = FullModel(
-    output_width=target_size,
-    output_height=target_size,
-    downsample_factor=cur_ds,
-    update_probe=True,
-    probe_width=probe_width,
-    probe_height=probe_height,
-    use_residual=use_residual,
-    object_initial=None,
-    probe_initial=probe_initial_torch,
-    n_levels=n_levels,
-    n_features_per_level=n_features_per_level,
-    log2_hashmap_size=log2_hashmap_size,
-    base_resolution=base_resolution,
-    per_level_scale=per_level_scale,
-    first_omega_0=first_omega_0,
-    hidden_omega_0=hidden_omega_0,
-    hidden_features=hidden_features,
-    hidden_layers=hidden_layers,
-    trainable_omega0=trainable_omega0,
-).to(device)
+if model_type == 'gaussian_field':
+    gs_obj_cfg = cfg.get('gaussian_field', {}) or {}
+    gs_probe_cfg = cfg.get('probe_gaussian_field', {}) or {}
+    modelFn = ConventionalGSModel2D(
+        output_width=target_size,
+        output_height=target_size,
+        downsample_factor=cur_ds,
+        update_probe=True,
+        probe_width=probe_width,
+        probe_height=probe_height,
+        use_residual=use_residual,
+        object_initial=None,
+        probe_initial=probe_initial_torch,
+        object_num_initial_gaussians=int(gs_obj_cfg.get('num_initial_gaussians', 30000)),
+        probe_num_initial_gaussians=int(gs_probe_cfg.get('num_initial_gaussians', 15000)),
+        parameterization=gs_obj_cfg.get('parameterization', 'cholesky'),
+        weight_representation=gs_obj_cfg.get('weight_representation', 'real_imag'),
+        phase_init_std=float(gs_obj_cfg.get('phase_init_std', 0.3)),
+        object_densify_grad_threshold=float(gs_obj_cfg.get('densify_grad_threshold', 5e-6)),
+        probe_densify_grad_threshold=float(gs_probe_cfg.get('densify_grad_threshold', 5e-6)),
+        object_densify_interval=int(gs_obj_cfg.get('densify_interval', 500)),
+        probe_densify_interval=int(gs_probe_cfg.get('densify_interval', 300)),
+        object_densify_until_step=int(gs_obj_cfg.get('densify_until_step', 15000)),
+        probe_densify_until_step=int(gs_probe_cfg.get('densify_until_step', 10000)),
+        object_max_gaussians=int(gs_obj_cfg.get('max_gaussians', 80000)),
+        probe_max_gaussians=int(gs_probe_cfg.get('max_gaussians', 60000)),
+        object_init_scale=float(gs_obj_cfg.get('init_scale', 5.0)),
+        probe_init_scale=float(gs_probe_cfg.get('init_scale', 1.0)),
+        object_min_scale=float(gs_obj_cfg.get('min_scale', 0.5)),
+        probe_min_scale=float(gs_probe_cfg.get('min_scale', 0.0)),
+        max_patch_radius=int(gs_obj_cfg.get('max_patch_radius', 16)),
+        object_density_control=str(gs_obj_cfg.get('density_control', 'adc')),
+        probe_density_control=str(gs_probe_cfg.get('density_control', 'adc')),
+        object_mcmc_grow_rate=float(gs_obj_cfg.get('mcmc_grow_rate', 0.05)),
+        probe_mcmc_grow_rate=float(gs_probe_cfg.get('mcmc_grow_rate', 0.05)),
+        object_mcmc_relocation_fraction=float(gs_obj_cfg.get('mcmc_relocation_fraction', 0.05)),
+        probe_mcmc_relocation_fraction=float(gs_probe_cfg.get('mcmc_relocation_fraction', 0.05)),
+        object_mcmc_noise_lr_scale=float(gs_obj_cfg.get('mcmc_noise_lr_scale', 1.0)),
+        probe_mcmc_noise_lr_scale=float(gs_probe_cfg.get('mcmc_noise_lr_scale', 1.0)),
+    ).to(device)
+else:
+    modelFn = FullModel(
+        output_width=target_size,
+        output_height=target_size,
+        downsample_factor=cur_ds,
+        update_probe=True,
+        probe_width=probe_width,
+        probe_height=probe_height,
+        use_residual=use_residual,
+        object_initial=None,
+        probe_initial=probe_initial_torch,
+        n_levels=n_levels,
+        n_features_per_level=n_features_per_level,
+        log2_hashmap_size=log2_hashmap_size,
+        base_resolution=base_resolution,
+        per_level_scale=per_level_scale,
+        first_omega_0=first_omega_0,
+        hidden_omega_0=hidden_omega_0,
+        hidden_features=hidden_features,
+        hidden_layers=hidden_layers,
+        trainable_omega0=trainable_omega0,
+    ).to(device)
 
 central_pixel = target_size // 2
 
 
 # ---- training loop (mirrors legacy/plant/Recovery.py; do not restructure) ---
 t = tqdm(range(num_epochs))
-optimizer = torch.optim.Adam(
-    lr=learning_rate, params=filter(lambda p: p.requires_grad, modelFn.parameters()))
+if model_type == 'gaussian_field':
+    param_groups = list(modelFn.object_model.get_param_groups(learning_rate))
+    if modelFn.probe_model is not None:
+        for g in modelFn.probe_model.get_param_groups(learning_rate):
+            g = dict(g)
+            g['name'] = 'probe_' + g.get('name', 'unknown')
+            param_groups.append(g)
+    optimizer = torch.optim.Adam(param_groups, lr=learning_rate)
+else:
+    optimizer = torch.optim.Adam(
+        lr=learning_rate, params=filter(lambda p: p.requires_grad, modelFn.parameters()))
 scheduler = torch.optim.lr_scheduler.StepLR(
     optimizer, step_size=lr_decay_step, gamma=lr_decay_gamma)
 
@@ -245,7 +301,31 @@ for epoch in t:
 
             retain = (batch_start + batch_size) < frames
             loss_batch.backward(retain_graph=retain)
+            if model_type == 'gaussian_field':
+                modelFn.object_model.accumulate_gradients()
+                if modelFn.probe_model is not None:
+                    modelFn.probe_model.accumulate_gradients()
             optimizer.step()
+            if model_type == 'gaussian_field':
+                modelFn.object_model.densification_step(optimizer)
+                if modelFn.probe_model is not None:
+                    modelFn.probe_model.densification_step(optimizer)
+                # MCMC-only: SGLD noise injection on xy + scale params.
+                # sgld_noise_step internally no-ops when density_control != "mcmc".
+                def _lr_by_name(opt, *names):
+                    for g in opt.param_groups:
+                        if g.get('name') in names:
+                            return float(g['lr'])
+                    return None
+                obj_lr_xy = _lr_by_name(optimizer, 'xy')
+                obj_lr_scale = _lr_by_name(optimizer, 'log_L_diag', 'scaling')
+                if obj_lr_xy is not None and obj_lr_scale is not None:
+                    modelFn.object_model.field.sgld_noise_step(obj_lr_xy, obj_lr_scale)
+                if modelFn.probe_model is not None:
+                    pr_lr_xy = _lr_by_name(optimizer, 'probe_xy')
+                    pr_lr_scale = _lr_by_name(optimizer, 'probe_log_L_diag', 'probe_scaling')
+                    if pr_lr_xy is not None and pr_lr_scale is not None:
+                        modelFn.probe_model.field.sgld_noise_step(pr_lr_xy, pr_lr_scale)
 
             sparsity_loss_val = (sparsity_loss_total.detach().item()
                                  if torch.is_tensor(sparsity_loss_total) else 0.0)
