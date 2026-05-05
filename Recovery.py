@@ -253,23 +253,36 @@ for epoch in t:
             object_complex, probe_complex = modelFn()
             if probe_complex is None:
                 raise RuntimeError("update_probe must be True for conventional ptychography")
-            probe_norm = torch.sqrt((probe_complex.abs() ** 2).sum())
-            probe_complex = probe_complex / probe_norm
 
             if probe_complex.dim() > 2:
                 probe_complex = probe_complex.squeeze()
             if object_complex.dim() > 2:
                 object_complex = object_complex.squeeze()
 
-            absP2 = probe_complex.abs() ** 2
-            Mp, Np = absP2.shape
-            tot = absP2.sum()
-            cp = torch.trunc(torch.tensor([Mp, Np], device=probe_complex.device) / 2 -
-                             torch.tensor([Mp, Np], device=probe_complex.device) *
-                             torch.stack((absP2.sum(1).cumsum(0).mean(),
-                                          absP2.sum(0).cumsum(0).mean())) / tot + 1).long()
-            probe_complex = (torch.roll(probe_complex, (-cp[0], -cp[1]), (0, 1))
-                             if cp.any() else probe_complex)
+            with torch.no_grad():
+                absP2 = probe_complex.abs() ** 2
+                Mp, Np = absP2.shape
+                tot = absP2.sum()
+                if tot == 0:
+                    cp = None
+                else:
+                    cp = torch.trunc(
+                        torch.tensor([Mp, Np], device=probe_complex.device) / 2
+                        - torch.tensor([Mp, Np], device=probe_complex.device)
+                        * torch.stack((absP2.sum(1).cumsum(0).mean(),
+                                       absP2.sum(0).cumsum(0).mean())) / tot
+                        + 1
+                    ).long()
+            if cp is not None and cp.any():
+                probe_complex = torch.roll(
+                    probe_complex, (-cp[0].item(), -cp[1].item()), (0, 1))
+
+            # Energy-normalize to sum(|p|^2) = N_pixels (per-pixel ~1).
+            # bf16-friendlier than L2=1 (which gives per-pixel ~1/sqrt(N)).
+            probe_energy = (probe_complex.abs() ** 2).sum()
+            if probe_energy > 0:
+                target_energy = float(probe_complex.shape[-2] * probe_complex.shape[-1])
+                probe_complex = probe_complex * (target_energy / probe_energy).sqrt()
 
             loss_batch = 0.0
             for id in batch_idx:
