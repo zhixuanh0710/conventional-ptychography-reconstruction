@@ -4,7 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Result format rule
 
-**Save reconstruction outputs as `.mat`, never `.npy`.** Use `scipy.io.savemat` (or `mat73`/HDF5 for v7.3 if needed). When a `.mat` field is already complex, **do not also save its amplitude/phase** as separate fields — they are derivable from the complex tensor and just bloat the file. When dumping multiple related complex outputs, group them into one `.mat` (multiple complex keys) rather than many files.
+**Save reconstruction outputs as `.mat`, never `.npy`.** Use `scipy.io.savemat` (or `mat73`/HDF5 for v7.3 if needed). Applies to `Recovery.py` and any new scripts under `scripts/`.
+
+**Use the unified variable names** when saving recovered fields:
+
+| Variable in `.mat` | Stores | dtype |
+|---|---|---|
+| `ObjectRecovery` | reconstructed object field | complex64/128 |
+| `Probe` | reconstructed probe | complex64/128 |
+
+Do not invent ad-hoc names like `obj_recovery`, `objectFinal`, `probeC`, `probe_complex`, etc. — pick the canonical name above so downstream comparison / plotting scripts can ingest any output without per-script branching.
+
+**Store complex values, never amplitude + phase as separate fields.** No `ObjectRecovery_amp` + `ObjectRecovery_phase` alongside `ObjectRecovery`. Both are derivable from the complex tensor and the duplication just bloats the file. Same goes for splitting into real/imag components.
+
+**Group related outputs into one `.mat`** (multiple complex keys) rather than many files. A single `epoch_99.mat` with both `ObjectRecovery` and `Probe` keys, not separate `obj_99.mat` + `probe_99.mat`.
 
 ## Running the reconstruction
 
