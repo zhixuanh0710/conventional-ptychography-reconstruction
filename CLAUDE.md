@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Result format rule
+
+**Save reconstruction outputs as `.mat`, never `.npy`.** Use `scipy.io.savemat` (or `mat73`/HDF5 for v7.3 if needed). When a `.mat` field is already complex, **do not also save its amplitude/phase** as separate fields — they are derivable from the complex tensor and just bloat the file. When dumping multiple related complex outputs, group them into one `.mat` (multiple complex keys) rather than many files.
+
 ## Running the reconstruction
 
 The entire project is driven by one script and one YAML config:
